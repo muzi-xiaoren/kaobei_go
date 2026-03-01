@@ -1,4 +1,4 @@
-package kaobei
+package downloader
 
 import (
 	"fmt"

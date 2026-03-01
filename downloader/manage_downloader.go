@@ -1,4 +1,4 @@
-package kaobei
+package downloader
 
 import (
 	"context"
@@ -29,7 +29,7 @@ var (
 const (
 	kafkaBroker   = "localhost:9092"
 	topic         = "comic-chapters"
-	numPartitions = 8
+	numPartitions = 3
 	// 建立 topic 指令：
 	// kafka-topics --bootstrap-server localhost:9092 --create --topic comic-chapters --partitions 8 --replication-factor 1
 )

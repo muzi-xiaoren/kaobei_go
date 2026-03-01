@@ -3,11 +3,10 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"kaobei/downloader"
 	"os"
 	"strconv"
 	"strings"
-
-	"kaobei/kaobei"
 )
 
 func main() {
@@ -36,14 +35,14 @@ func main() {
 
 	// 初始化（无头模式）
 	// page := kaobei.InitializeBrowser(true, "") // headless = true, 无 debuggerAddr
-	page := kaobei.InitializeBrowser(false, "") // false = 可见窗口
+	page := downloader.InitializeBrowser(false, "") // false = 可见窗口
 	defer page.Close()
 
-	kaobei.Login(page, "test_345", "123456789") // ← 改成真实账号密码
+	downloader.Login(page, "test_345", "123456789") // ← 改成真实账号密码
 
 	// 漫画页面 URL（请自行修改）
 	comicURL := "https://www.mangacopy.com/comic/sydsz"
-	title, totalChapters, chapterURLs := kaobei.GetComicInfo(page, comicURL)
+	title, totalChapters, chapterURLs := downloader.GetComicInfo(page, comicURL)
 
 	if end > totalChapters || end == 114514 {
 		end = totalChapters
@@ -53,7 +52,7 @@ func main() {
 	defer browser.MustClose()
 	fmt.Printf("漫画：《%s》 共 %d 章，将下载 %d-%d 章\n", title, totalChapters, start, end)
 
-	kaobei.StartDownloadWithKafka(browser, chapterURLs, start, end, title, mode)
+	downloader.StartDownloadWithKafka(browser, chapterURLs, start, end, title, mode)
 
 	fmt.Println("全部下载完成！")
 }
