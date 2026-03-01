@@ -53,7 +53,7 @@ func main() {
 	defer browser.MustClose()
 	fmt.Printf("漫画：《%s》 共 %d 章，将下载 %d-%d 章\n", title, totalChapters, start, end)
 
-	kaobei.StartThreads(browser, chapterURLs, start, end, title, mode)
+	kaobei.StartDownloadWithKafka(browser, chapterURLs, start, end, title, mode)
 
 	fmt.Println("全部下载完成！")
 }

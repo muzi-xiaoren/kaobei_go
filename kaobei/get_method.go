@@ -24,7 +24,7 @@ func GetUrl(html string, page int) map[int][]string {
 	return map[int][]string{page: dataSrcList}
 }
 
-func GetDownurl(page int, teNum int, title string, srcs []string, endChapter int) {
+func GetDownurl(page int, teNum int, title string, srcs []string) {
 	var localWg sync.WaitGroup
 	sem := make(chan struct{}, 1000)
 
@@ -39,12 +39,12 @@ func GetDownurl(page int, teNum int, title string, srcs []string, endChapter int
 			Download(url, teNum, idx+1, page, title)
 		}(j, src)
 	}
-	if page == endChapter {
-		localWg.Wait()
-	}
+
+	localWg.Wait()
+	fmt.Printf("章%d successfully downloaded\n", page)
 }
 
-func GetDownurlSep(page int, teNum int, title string, srcs []string, endChapter int) {
+func GetDownurlSep(page int, teNum int, title string, srcs []string) {
 	subtitle := filepath.Join(title, fmt.Sprintf("%d", page))
 	os.MkdirAll(subtitle, os.ModePerm)
 
@@ -62,24 +62,7 @@ func GetDownurlSep(page int, teNum int, title string, srcs []string, endChapter 
 			Download(url, teNum, idx+1, page, subtitle)
 		}(j, src)
 	}
-	if page == endChapter {
-		localWg.Wait()
-	}
-}
 
-func GetPage(srcs *goquery.Selection) (int, []string) {
-	temp := 0
-	tempList := []string{}
-	srcs.Each(func(i int, s *goquery.Selection) {
-		href, ok := s.Attr("href")
-		if ok && strings.Contains(href, "comic") {
-			tempList = append(tempList, "https://www.mangacopy.com"+href)
-			temp++
-		}
-	})
-	return temp, tempList
-}
-
-func GetValid(startChapter, endChapter, maxChapter int) bool {
-	return 1 <= startChapter && startChapter <= endChapter && endChapter <= maxChapter
+	localWg.Wait()
+	fmt.Printf("章%d successfully downloaded\n", page)
 }

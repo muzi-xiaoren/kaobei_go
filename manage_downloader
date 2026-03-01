@@ -20,18 +20,13 @@ import (
 )
 
 var (
-	browser      *rod.Browser
-	once         sync.Once
-	producer     *kafka.Writer
-	producerOnce sync.Once
+	browser *rod.Browser
+	once    sync.Once
 )
 
 const (
-	kafkaBroker   = "localhost:9092"
-	topic         = "comic-chapters"
-	numPartitions = 8 // <<< 重要：請確保你的 topic 至少有這個數量的 partition（推薦 8~32）
-	// 建立 topic 指令範例：
-	// kafka-topics --bootstrap-server localhost:9092 --create --topic comic-chapters --partitions 8 --replication-factor 1
+	kafkaBroker = "localhost:9092"
+	topic       = "comic-chapters"
 )
 
 type ChapterImages struct {
@@ -43,32 +38,38 @@ type ChapterImages struct {
 func getBrowser(headless bool, remoteDebugAddr string) *rod.Browser {
 	once.Do(func() {
 		var u string
+
 		l := launcher.New().
 			Headless(headless).
 			NoSandbox(true).
 			Devtools(false).
-			Leakless(false)
+			Leakless(false) //禁用 leakless
 
+		// 如果系统有 Chrome，用系统 Chrome
 		if path, found := launcher.LookPath(); found {
 			l.Bin(path)
 		} else {
-			fmt.Println("未找到系統 Chrome，rod 將嘗試下載...")
+			fmt.Println("未找到系统 Chrome，rod 将尝试下载...")
 		}
 
 		if remoteDebugAddr != "" {
-			l.RemoteDebuggingPort(9222)
+			// 连接已有浏览器（端口号如 "9222"）
+			l.RemoteDebuggingPort(9222) // 或 strconv.Atoi(remoteDebugAddr)
 		}
 
 		u = l.MustLaunch()
+
 		browser = rod.New().
 			ControlURL(u).
 			Trace(false).
 			SlowMotion(300 * time.Millisecond).
 			MustConnect()
 	})
+
 	return browser
 }
 
+// InitializeBrowser 返回一个可用的 Page（类似原来的 driver）
 func InitializeBrowser(headless bool, remoteDebugAddr string) *rod.Page {
 	b := getBrowser(headless, remoteDebugAddr)
 	page := b.MustPage("")
@@ -82,16 +83,21 @@ func Login(page *rod.Page, username, password string) {
 	page.MustNavigate("https://www.mangacopy.com/web/login/loginByAccount?url=person%2Fhome")
 	page.MustWaitLoad().MustWaitIdle()
 
+	// 等待表单加载
 	page.Timeout(30 * time.Second).MustElement(".el-input__inner")
 
+	// 用户名输入框
 	userInput := page.MustElement(`input[type="text"].el-input__inner`)
 	userInput.MustInput(username)
 
+	// 密码输入框
 	passInput := page.MustElement(`input[type="password"].el-input__inner`)
 	passInput.MustInput(password)
 
+	// 登录按钮 - 使用 MustElementR
 	loginBtn, err := page.ElementR(`button`, `登錄`)
 	if err != nil {
+		// 尝试其他选择器
 		loginBtn, err = page.Element(`.el-button.el-button--primary`)
 		if err != nil {
 			log.Printf("找不到登录按钮: %v", err)
@@ -99,6 +105,7 @@ func Login(page *rod.Page, username, password string) {
 			return
 		}
 	}
+
 	loginBtn.MustClick()
 	page.MustWaitNavigation()
 	time.Sleep(3 * time.Second)
@@ -108,8 +115,8 @@ func GetComicInfo(page *rod.Page, url string) (string, int, []string) {
 	fmt.Println("访问拷贝页面中...")
 	page.MustNavigate(url).MustWaitLoad().MustWaitIdle()
 	page.Timeout(30 * time.Second).MustElement("#default全部")
-
 	html := page.MustHTML()
+
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
 	if err != nil {
 		panic(err)
@@ -120,7 +127,6 @@ func GetComicInfo(page *rod.Page, url string) (string, int, []string) {
 		title = "未知漫画"
 	}
 	os.MkdirAll(title, 0755)
-
 	div := doc.Find(`div[id="default全部"]`).First()
 	fmt.Print(div.Length())
 
@@ -130,6 +136,7 @@ func GetComicInfo(page *rod.Page, url string) (string, int, []string) {
 		full := "https://www.mangacopy.com" + href
 		srcList = append(srcList, full)
 	})
+
 	return title, len(srcList), srcList
 }
 
@@ -147,11 +154,13 @@ func FetchChapterImages(b *rod.Browser, chapterURL string, initialScrolls int, c
 
 	html := page.MustHTML()
 	doc, _ := goquery.NewDocumentFromReader(strings.NewReader(html))
+
 	countText := doc.Find("span.comicCount").First().Text()
 	expected, _ := strconv.Atoi(countText)
 
-	imgMap := GetUrl(html, chapterIndex+1) // 假設你有這個函數
+	imgMap := GetUrl(html, chapterIndex+1)
 	actual := len(imgMap[chapterIndex+1])
+
 	fmt.Printf("%d|%d", expected, actual)
 
 	if actual >= expected && actual > 0 {
@@ -160,51 +169,43 @@ func FetchChapterImages(b *rod.Browser, chapterURL string, initialScrolls int, c
 	return FetchChapterImages(b, chapterURL, initialScrolls*2, chapterIndex)
 }
 
-func initProducer() {
-	producerOnce.Do(func() {
-		producer = &kafka.Writer{
-			Addr:     kafka.TCP(kafkaBroker),
-			Topic:    topic,
-			Balancer: nil, // 關鍵：不設定 Balancer，讓我們手動指定的 Partition 生效
-		}
-	})
-}
-
-// Kafka 消費者（consumer group 模式，可同時消費所有 partition）
+// Kafka 消费者（在后台执行，接收消息后呼叫下载）
 func startKafkaConsumer(title string, mode int) {
 	reader := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:     []string{kafkaBroker},
+		Brokers:     []string{"localhost:9092"},
 		Topic:       topic,
-		GroupID:     "kaobei-downloader-li",
+		GroupID:     "kaobei-downloader-li", // 唯一标识你的下载任务
+		Partition:   0,                      // 如果加了 GroupID，通常不要手动指定 Partition（让组自动分配）
 		MinBytes:    10e3,
 		MaxBytes:    10e6,
 		MaxWait:     500 * time.Millisecond,
 		StartOffset: kafka.FirstOffset,
-		// Partition: 0, // 已移除！使用 GroupID 時絕對不要指定，否則只能讀 partition 0
 	})
 	defer reader.Close()
 
-	fmt.Println("[Kafka Consumer] 已启动（consumer group 模式，支持多 partition），等待讯息...")
+	fmt.Println("[Kafka Consumer] 已启动，等待讯息...")
 
 	var globalWg sync.WaitGroup
-
+	fmt.Println("1")
 	for {
+		fmt.Println("2")
 		msg, err := reader.ReadMessage(context.Background())
 		if err != nil {
 			log.Printf("[Kafka] 读取讯息错误: %v", err)
 			time.Sleep(3 * time.Second)
 			continue
 		}
-
-		_ = reader.CommitMessages(context.Background(), msg)
-
+		err = reader.CommitMessages(context.Background(), msg)
+		if err != nil {
+			log.Printf("commit 失败: %v", err)
+		}
+		fmt.Println("3")
 		var ci ChapterImages
 		if err := json.Unmarshal(msg.Value, &ci); err != nil {
 			continue
 		}
-
+		// 打印ci的全部内容
 		fmt.Printf("%+v\n", ci)
-
 		if ci.Chapter == -1 {
 			fmt.Println("[Kafka] 收到结束讯息，等待所有下载完成...")
 			globalWg.Wait()
@@ -214,7 +215,9 @@ func startKafkaConsumer(title string, mode int) {
 		globalWg.Add(1)
 		go func(chapterMsg ChapterImages) {
 			defer globalWg.Done()
+
 			fmt.Printf("[Kafka] 收到章节 %d (共 %d 张)\n", chapterMsg.Chapter, len(chapterMsg.Images))
+
 			if mode == 1 {
 				GetDownurlSep(chapterMsg.Chapter, chapterMsg.TotalImages, title, chapterMsg.Images)
 			} else {
@@ -225,53 +228,56 @@ func startKafkaConsumer(title string, mode int) {
 }
 
 func StartDownloadWithKafka(b *rod.Browser, srcList []string, startChapter, endChapter int, title string, mode int) {
-	// 1. 啟動消費者（goroutine）
+	// 用 Channel 同步
 	done := make(chan bool)
+
 	go func() {
 		startKafkaConsumer(title, mode)
 		done <- true
 	}()
-
-	// 2. 初始化生產者（singleton）
-	initProducer()
+	// // 2. 建立 Kafka 生產者
+	// writer := &kafka.Writer{
+	// 	Addr:     kafka.TCP(kafkaBroker),
+	// 	Topic:    topic,
+	// 	Balancer: &kafka.Hash{},
+	// 	// Balancer: &kafka.LeastBytes{},
+	// }
+	// defer writer.Close()
 
 	ctx := context.Background()
 
-	// 3. 推送每個章節到「具體」的 partition
 	for i := startChapter; i < endChapter+1 && i < len(srcList); i++ {
 		images := FetchChapterImages(b, srcList[i], 4, i)
-
 		msg := ChapterImages{
 			Chapter:     i,
 			Images:      images,
 			TotalImages: len(images),
 		}
+
 		bytes, _ := json.Marshal(msg)
 
-		partition := i % numPartitions
-		err := producer.WriteMessages(ctx, kafka.Message{
-			Partition: partition,
-			Value:     bytes,
-		})
-
+		conn, err := kafka.DialLeader(ctx, "tcp", kafkaBroker, topic, 0)
 		if err != nil {
-			log.Printf("推送 chapter %d 到 partition %d 失敗: %v", i, partition, err)
-		} else {
-			fmt.Printf("已推送章节 %d 到 partition %d (%d 张)\n", i, partition, len(images))
+			log.Printf("连接分区 0 失败: %v", err)
+			continue
 		}
+
+		_, err = conn.WriteMessages(kafka.Message{Value: bytes})
+		if err != nil {
+			log.Printf("写入分区 0 失败: %v", err)
+		} else {
+			fmt.Printf("已推送章节 %d 到分区 0 (%d 张)\n", i, len(images))
+		}
+
+		conn.Close()
 	}
 
-	// 4. 發送結束訊號（任意 partition 即可）
+	// 结束信号也发分区 0
+	conn, _ := kafka.DialLeader(ctx, "tcp", kafkaBroker, topic, 0)
 	endBytes, _ := json.Marshal(ChapterImages{Chapter: -1})
-	_ = producer.WriteMessages(ctx, kafka.Message{
-		Partition: 0,
-		Value:     endBytes,
-	})
+	conn.WriteMessages(kafka.Message{Value: endBytes})
+	conn.Close()
 
-	fmt.Println("所有章节已推送至 Kafka，等待下载完成...")
+	fmt.Println("推送至 Kafka，等待下载完成...")
 	<-done
-
-	// 5. 清理
-	producer.Close()
-	fmt.Println("Kafka Producer 已關閉，程式結束。")
 }
