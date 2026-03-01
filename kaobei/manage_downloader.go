@@ -29,8 +29,8 @@ var (
 const (
 	kafkaBroker   = "localhost:9092"
 	topic         = "comic-chapters"
-	numPartitions = 8 // <<< 重要：請確保你的 topic 至少有這個數量的 partition（推薦 8~32）
-	// 建立 topic 指令範例：
+	numPartitions = 8
+	// 建立 topic 指令：
 	// kafka-topics --bootstrap-server localhost:9092 --create --topic comic-chapters --partitions 8 --replication-factor 1
 )
 
@@ -52,7 +52,7 @@ func getBrowser(headless bool, remoteDebugAddr string) *rod.Browser {
 		if path, found := launcher.LookPath(); found {
 			l.Bin(path)
 		} else {
-			fmt.Println("未找到系統 Chrome，rod 將嘗試下載...")
+			fmt.Println("未找到系统 Chrome，rod 将尝试下载...")
 		}
 
 		if remoteDebugAddr != "" {
@@ -150,7 +150,7 @@ func FetchChapterImages(b *rod.Browser, chapterURL string, initialScrolls int, c
 	countText := doc.Find("span.comicCount").First().Text()
 	expected, _ := strconv.Atoi(countText)
 
-	imgMap := GetUrl(html, chapterIndex+1) // 假設你有這個函數
+	imgMap := GetUrl(html, chapterIndex+1)
 	actual := len(imgMap[chapterIndex+1])
 	fmt.Printf("%d|%d", expected, actual)
 
@@ -165,33 +165,33 @@ func initProducer() {
 		producer = &kafka.Writer{
 			Addr:     kafka.TCP(kafkaBroker),
 			Topic:    topic,
-			Balancer: nil, // 關鍵：不設定 Balancer，讓我們手動指定的 Partition 生效
+			Balancer: nil, // 不设定 Balancer，让手动的 Partition 生效
 		}
 	})
 }
 
-// Kafka 消費者（consumer group 模式，可同時消費所有 partition）
+// Kafka 消费者（consumer group 模式，可同时消费所有 partition）
 func startKafkaConsumer(title string, mode int) {
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:     []string{kafkaBroker},
 		Topic:       topic,
-		GroupID:     "kaobei-downloader-li",
+		GroupID:     "kaobei-downloader",
 		MinBytes:    10e3,
 		MaxBytes:    10e6,
 		MaxWait:     500 * time.Millisecond,
 		StartOffset: kafka.FirstOffset,
-		// Partition: 0, // 已移除！使用 GroupID 時絕對不要指定，否則只能讀 partition 0
+		// Partition: 0, // 已移除！使用 GroupID 时绝对不要指定，否则只能读取 partition 0
 	})
 	defer reader.Close()
 
-	fmt.Println("[Kafka Consumer] 已启动（consumer group 模式，支持多 partition），等待讯息...")
+	fmt.Println("[Kafka Consumer] 已启动（consumer group 模式，支持多 partition），等待消息...")
 
 	var globalWg sync.WaitGroup
 
 	for {
 		msg, err := reader.ReadMessage(context.Background())
 		if err != nil {
-			log.Printf("[Kafka] 读取讯息错误: %v", err)
+			log.Printf("[Kafka] 读取消息错误: %v", err)
 			time.Sleep(3 * time.Second)
 			continue
 		}
@@ -206,7 +206,7 @@ func startKafkaConsumer(title string, mode int) {
 		fmt.Printf("%+v\n", ci)
 
 		if ci.Chapter == -1 {
-			fmt.Println("[Kafka] 收到结束讯息，等待所有下载完成...")
+			fmt.Println("[Kafka] 收到结束消息，等待所有下载完成...")
 			globalWg.Wait()
 			return
 		}
@@ -225,19 +225,19 @@ func startKafkaConsumer(title string, mode int) {
 }
 
 func StartDownloadWithKafka(b *rod.Browser, srcList []string, startChapter, endChapter int, title string, mode int) {
-	// 1. 啟動消費者（goroutine）
+	// 启动消费者（goroutine）
 	done := make(chan bool)
 	go func() {
 		startKafkaConsumer(title, mode)
 		done <- true
 	}()
 
-	// 2. 初始化生產者（singleton）
+	// 初始化生产者（singleton）
 	initProducer()
 
 	ctx := context.Background()
 
-	// 3. 推送每個章節到「具體」的 partition
+	// 推送每个章节到「具体」的 partition
 	for i := startChapter; i < endChapter+1 && i < len(srcList); i++ {
 		images := FetchChapterImages(b, srcList[i], 4, i)
 
@@ -261,7 +261,7 @@ func StartDownloadWithKafka(b *rod.Browser, srcList []string, startChapter, endC
 		}
 	}
 
-	// 4. 發送結束訊號（任意 partition 即可）
+	// 发送结束消息（任意 partition 即可）
 	endBytes, _ := json.Marshal(ChapterImages{Chapter: -1})
 	_ = producer.WriteMessages(ctx, kafka.Message{
 		Partition: 0,
@@ -271,7 +271,7 @@ func StartDownloadWithKafka(b *rod.Browser, srcList []string, startChapter, endC
 	fmt.Println("所有章节已推送至 Kafka，等待下载完成...")
 	<-done
 
-	// 5. 清理
+	// 清理
 	producer.Close()
-	fmt.Println("Kafka Producer 已關閉，程式結束。")
+	fmt.Println("Kafka Producer 已关闭")
 }
